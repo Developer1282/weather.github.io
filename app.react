@@ -1,0 +1,430 @@
+import React, { useState, useEffect, useCallback, useRef } from 'react';
+import { 
+  Search, 
+  Wind, 
+  Droplets, 
+  Sun, 
+  Sunrise, 
+  Sunset, 
+  Eye, 
+  Thermometer, 
+  Cloud,
+  CloudRain,
+  CloudSnow,
+  CloudLightning,
+  Maximize2,
+  Navigation,
+  ChevronRight,
+  MapPin,
+  Calendar
+} from 'lucide-react';
+
+// --- Constants & Helpers ---
+
+const WEATHER_CODES = {
+  0: { label: 'Clear Sky', icon: Sun, color: 'text-yellow-400' },
+  1: { label: 'Mainly Clear', icon: Sun, color: 'text-yellow-300' },
+  2: { label: 'Partly Cloudy', icon: Cloud, color: 'text-gray-200' },
+  3: { label: 'Overcast', icon: Cloud, color: 'text-gray-300' },
+  45: { label: 'Fog', icon: Cloud, color: 'text-blue-100' },
+  48: { label: 'Rime Fog', icon: Cloud, color: 'text-blue-50' },
+  51: { label: 'Light Drizzle', icon: CloudRain, color: 'text-blue-300' },
+  61: { label: 'Rain', icon: CloudRain, color: 'text-blue-400' },
+  71: { label: 'Snow', icon: CloudSnow, color: 'text-white' },
+  80: { label: 'Showers', icon: CloudRain, color: 'text-blue-500' },
+  95: { label: 'Thunderstorm', icon: CloudLightning, color: 'text-purple-400' },
+};
+
+const getWeatherInfo = (code) => WEATHER_CODES[code] || { label: 'Unknown', icon: Cloud, color: 'text-white' };
+
+const formatToHour = (isoString) => {
+  const date = new Date(isoString);
+  return date.toLocaleTimeString([], { hour: 'numeric', hour12: true }).split(' ')[0];
+};
+
+const getDayName = (dateStr) => {
+  const date = new Date(dateStr);
+  const today = new Date();
+  if (date.toDateString() === today.toDateString()) return 'Today';
+  return date.toLocaleDateString('en-US', { weekday: 'short' });
+};
+
+// --- App Component ---
+
+export default function App() {
+  const [location, setLocation] = useState({ 
+    name: 'New York', 
+    lat: 40.7143, 
+    lon: -74.006,
+    timezone: 'America/New_York'
+  });
+  const [weatherData, setWeatherData] = useState(null);
+  const [loading, setLoading] = useState(true);
+  const [searchQuery, setSearchQuery] = useState('');
+  const [suggestions, setSuggestions] = useState([]);
+  const [isSearching, setIsSearching] = useState(false);
+  const [scrollTop, setScrollTop] = useState(0);
+  
+  // Resizing state
+  const [dimensions, setDimensions] = useState({ 
+    width: typeof window !== 'undefined' ? window.innerWidth - 64 : 420, 
+    height: typeof window !== 'undefined' ? window.innerHeight - 64 : 800 
+  });
+  const isResizing = useRef(false);
+  const scrollContainerRef = useRef(null);
+
+  // Fetch Weather Data
+  const fetchWeather = useCallback(async (lat, lon, tz) => {
+    setLoading(true);
+    try {
+      const url = `https://api.open-meteo.com/v1/forecast?latitude=${lat}&longitude=${lon}&daily=weather_code,temperature_2m_max,temperature_2m_min,sunrise,sunset,uv_index_max,precipitation_probability_max&hourly=temperature_2m,weather_code,precipitation_probability&current=temperature_2m,relative_humidity_2m,apparent_temperature,is_day,weather_code,pressure_msl,wind_speed_10m,visibility&timezone=${encodeURIComponent(tz)}&temperature_unit=fahrenheit&wind_speed_unit=mph&precipitation_unit=inch`;
+      const response = await fetch(url);
+      const data = await response.json();
+      setWeatherData(data);
+    } catch (error) {
+      console.error("Failed to fetch weather:", error);
+    } finally {
+      setLoading(false);
+    }
+  }, []);
+
+  useEffect(() => {
+    fetchWeather(location.lat, location.lon, location.timezone);
+  }, [location, fetchWeather]);
+
+  // Handle Location Search
+  useEffect(() => {
+    if (searchQuery.length < 2) {
+      setSuggestions([]);
+      return;
+    }
+    const timer = setTimeout(async () => {
+      try {
+        const res = await fetch(`https://geocoding-api.open-meteo.com/v1/search?name=${searchQuery}&count=5&language=en&format=json`);
+        const data = await res.json();
+        setSuggestions(data.results || []);
+      } catch (err) {
+        console.error("Geocoding error:", err);
+      }
+    }, 300);
+    return () => clearTimeout(timer);
+  }, [searchQuery]);
+
+  // Handle Scroll tracking for the collapsing effect
+  const handleScroll = (e) => {
+    setScrollTop(e.target.scrollTop);
+  };
+
+  // Resize Logic
+  const startResizing = (e) => {
+    isResizing.current = true;
+    document.addEventListener('mousemove', handleMouseMove);
+    document.addEventListener('mouseup', stopResizing);
+  };
+
+  const stopResizing = () => {
+    isResizing.current = false;
+    document.removeEventListener('mousemove', handleMouseMove);
+    document.removeEventListener('mouseup', stopResizing);
+  };
+
+  const handleMouseMove = (e) => {
+    if (!isResizing.current) return;
+    const newWidth = Math.max(320, e.clientX - (window.innerWidth / 2 - dimensions.width / 2));
+    const newHeight = Math.max(400, e.clientY - 32); 
+    setDimensions({ width: newWidth, height: newHeight });
+  };
+
+  const selectLocation = (res) => {
+    setLocation({
+      name: res.name,
+      lat: res.latitude,
+      lon: res.longitude,
+      timezone: res.timezone
+    });
+    setIsSearching(false);
+    setSearchQuery('');
+    setSuggestions([]);
+    if (scrollContainerRef.current) scrollContainerRef.current.scrollTop = 0;
+  };
+
+  if (!weatherData && loading) {
+    return (
+      <div className="flex items-center justify-center min-h-screen text-white">
+        <div className="animate-pulse text-xl">Loading Weather...</div>
+      </div>
+    );
+  }
+
+  const current = weatherData?.current;
+  const daily = weatherData?.daily;
+  const hourly = weatherData?.hourly;
+  const currentWeather = getWeatherInfo(current?.weather_code);
+
+  // Transition calculations
+  const collapseStart = 30;
+  const collapseEnd = 150;
+  const scrollProgress = Math.min(Math.max((scrollTop - collapseStart) / (collapseEnd - collapseStart), 0), 1);
+  
+  const opacity = 1 - scrollProgress;
+  const stickyHeaderOpacity = scrollProgress;
+
+  return (
+    <div className="flex items-start justify-center min-h-screen p-8 font-sans overflow-auto bg-transparent">
+      
+      <div 
+        style={{ width: `${dimensions.width}px`, height: `${dimensions.height}px` }}
+        className="relative flex flex-col rounded-[2.5rem] overflow-hidden bg-indigo-950/40 backdrop-blur-3xl border border-white/20 shadow-2xl transition-all duration-75 group"
+      >
+        {/* Resize Handle (Top Right) */}
+        <div 
+          onMouseDown={startResizing}
+          className="absolute top-6 right-6 z-[100] cursor-nwse-resize p-2 text-white/40 hover:text-white transition-colors"
+        >
+          <Maximize2 size={20} />
+        </div>
+
+        {/* --- STICKY COMPACT HEADER --- */}
+        <div 
+          className="absolute top-0 left-0 right-0 z-[90] px-8 h-16 flex items-center justify-center pointer-events-none"
+          style={{ 
+            opacity: stickyHeaderOpacity,
+          }}
+        >
+          <div className="flex items-center gap-3 text-white font-medium bg-black/40 px-6 py-2 rounded-full border border-white/10 shadow-lg translate-y-4 backdrop-blur-md">
+            <span className="text-sm font-bold">{location.name}</span>
+            <span className="text-white/40 font-thin">|</span>
+            <span className="text-sm font-bold">{Math.round(current?.temperature_2m)}°</span>
+            <span className="text-white/40 font-thin">|</span>
+            <span className="text-sm font-medium">{currentWeather.label}</span>
+            <span className="text-white/40 font-thin">|</span>
+            <span className="text-xs font-bold whitespace-nowrap">H:{Math.round(daily?.temperature_2m_max[0])}° L:{Math.round(daily?.temperature_2m_min[0])}°</span>
+          </div>
+        </div>
+
+        {/* Search Control */}
+        <div className="absolute top-8 right-12 z-[100]">
+          <button 
+            onClick={() => setIsSearching(!isSearching)}
+            className="p-3 bg-white/10 rounded-full hover:bg-white/20 transition-all text-white shadow-lg border border-white/10"
+          >
+            <Search size={22} />
+          </button>
+        </div>
+
+        {/* Scrollable Content Container */}
+        <div 
+          ref={scrollContainerRef}
+          onScroll={handleScroll}
+          className="flex-1 overflow-y-auto px-8 pb-10 scrollbar-hide relative pt-12"
+        >
+          {/* --- LARGE EXPANDED HEADER --- */}
+          <div className="flex flex-col items-center text-center mb-12"
+            style={{ 
+              opacity: opacity, 
+              transform: `scale(${1 - scrollProgress * 0.1}) translateY(${-scrollTop * 0.2}px)`,
+            }}
+          >
+            <h1 className="text-4xl font-normal text-white flex items-center gap-3">
+              {location.name} <Navigation size={20} className="fill-white" />
+            </h1>
+            <p className="text-8xl font-thin text-white mt-4 -ml-1">
+              {Math.round(current?.temperature_2m)}°
+            </p>
+            <p className="text-2xl text-white/80 font-medium mt-2">
+              {currentWeather.label}
+            </p>
+            <div className="flex gap-4 text-white font-medium mt-2 text-xl">
+              <span>H:{Math.round(daily?.temperature_2m_max[0])}°</span>
+              <span>L:{Math.round(daily?.temperature_2m_min[0])}°</span>
+            </div>
+          </div>
+
+          <div className="space-y-6">
+            {/* Hourly Forecast */}
+            <div className="bg-black/20 rounded-[2rem] p-6 border border-white/5">
+              <div className="flex items-center gap-2 text-white/40 text-xs font-bold uppercase tracking-widest mb-4 border-b border-white/10 pb-3">
+                <Sun size={14} /> 24-Hour Forecast
+              </div>
+              <div className="flex gap-8 overflow-x-auto pb-2 scrollbar-hide">
+                {hourly?.time.slice(0, 24).map((time, i) => {
+                  const info = getWeatherInfo(hourly.weather_code[i]);
+                  const Icon = info.icon;
+                  const isNow = i === 0;
+                  return (
+                    <div key={i} className="flex flex-col items-center min-w-[3.5rem] gap-4">
+                      <span className="text-sm font-bold text-white">{isNow ? 'Now' : formatToHour(time)}</span>
+                      <Icon size={24} className={info.color} />
+                      <span className="text-xl font-bold text-white">{Math.round(hourly.temperature_2m[i])}°</span>
+                      {hourly.precipitation_probability[i] > 0 && (
+                        <span className="text-xs text-blue-300 font-bold -mt-2">{hourly.precipitation_probability[i]}%</span>
+                      )}
+                    </div>
+                  );
+                })}
+              </div>
+            </div>
+
+            {/* 7-Day Forecast */}
+            <div className="bg-black/20 rounded-[2rem] p-6 border border-white/5">
+              <div className="flex items-center gap-2 text-white/40 text-xs font-bold uppercase tracking-widest mb-4 border-b border-white/10 pb-3">
+                <Calendar size={14} /> 7-Day Forecast
+              </div>
+              <div className="space-y-5">
+                {daily?.time.map((day, i) => {
+                  const dayInfo = getWeatherInfo(daily.weather_code[i]);
+                  const Icon = dayInfo.icon;
+                  const chance = daily.precipitation_probability_max[i];
+                  return (
+                    <div key={i} className="flex items-center text-white">
+                      <span className="w-16 text-lg font-semibold">{getDayName(day)}</span>
+                      <div className="flex flex-col items-center justify-center w-12 mx-4">
+                        <Icon size={24} className={dayInfo.color} />
+                      </div>
+                      <div className="flex-1">
+                        {chance > 10 && (
+                          <span className="text-xs text-blue-300 font-bold">{chance}%</span>
+                        )}
+                      </div>
+                      <div className="flex items-center gap-6 min-w-[8rem] justify-end">
+                        <span className="text-white/40 text-lg font-medium">{Math.round(daily.temperature_2m_min[i])}°</span>
+                        <div className="w-24 h-1.5 bg-white/10 rounded-full relative">
+                          <div className="absolute inset-0 bg-gradient-to-r from-blue-400 via-yellow-300 to-orange-400 opacity-60 rounded-full" />
+                        </div>
+                        <span className="text-lg font-bold">{Math.round(daily.temperature_2m_max[i])}°</span>
+                      </div>
+                    </div>
+                  );
+                })}
+              </div>
+            </div>
+
+            {/* Details Grid */}
+            <div className="grid grid-cols-2 gap-6">
+              <div className="bg-black/20 rounded-[2rem] p-6 border border-white/5 flex flex-col justify-between h-48">
+                <div>
+                  <div className="flex items-center gap-2 text-white/40 text-xs font-bold uppercase tracking-widest">
+                    <Sun size={14} /> UV Index
+                  </div>
+                  <div className="text-4xl text-white font-bold mt-4">{Math.round(daily?.uv_index_max[0])}</div>
+                  <div className="text-lg text-white font-semibold mt-1">Moderate</div>
+                </div>
+                <div className="w-full h-1.5 bg-white/10 rounded-full relative overflow-hidden">
+                  <div 
+                    className="h-full bg-gradient-to-r from-green-400 via-yellow-400 to-red-500" 
+                    style={{ width: `${Math.min((daily?.uv_index_max[0] / 12) * 100, 100)}%` }}
+                  />
+                </div>
+              </div>
+
+              <div className="bg-black/20 rounded-[2rem] p-6 border border-white/5 flex flex-col justify-between h-48">
+                <div className="flex justify-between items-start">
+                  <div className="flex flex-col gap-1">
+                    <div className="flex items-center gap-2 text-white/40 text-xs font-bold uppercase tracking-widest">
+                      <Sunset size={14} /> Sunset
+                    </div>
+                    <div className="text-4xl text-white font-bold mt-2 leading-none">
+                      {new Date(daily?.sunset[0]).toLocaleTimeString([], { hour: 'numeric', minute: '2-digit' })}
+                    </div>
+                  </div>
+                  <div className="flex flex-col items-end text-right">
+                    <div className="flex items-center gap-2 text-white/40 text-[10px] font-bold uppercase tracking-widest">
+                       Sunrise <Sunrise size={12} />
+                    </div>
+                    <div className="text-lg text-white font-medium mt-1">
+                      {new Date(daily?.sunrise[0]).toLocaleTimeString([], { hour: 'numeric', minute: '2-digit' })}
+                    </div>
+                  </div>
+                </div>
+                <div className="text-sm text-white/50 border-t border-white/5 pt-2">
+                  Daylight: {Math.round((new Date(daily?.sunset[0]) - new Date(daily?.sunrise[0])) / 3600000)} hours
+                </div>
+              </div>
+
+              <div className="bg-black/20 rounded-[2rem] p-6 border border-white/5 h-48">
+                <div className="flex items-center gap-2 text-white/40 text-xs font-bold uppercase tracking-widest">
+                  <Wind size={14} /> Wind
+                </div>
+                <div className="flex items-center justify-between mt-6">
+                  <div className="relative w-20 h-20 flex items-center justify-center">
+                    <div className="absolute inset-0 border-2 border-white/10 rounded-full" />
+                    <Navigation size={32} className="text-white fill-white" />
+                  </div>
+                  <div className="text-right">
+                    <div className="text-4xl text-white font-bold">{Math.round(current?.wind_speed_10m)}</div>
+                    <div className="text-sm text-white/40 font-bold uppercase">MPH</div>
+                  </div>
+                </div>
+              </div>
+
+              <div className="bg-black/20 rounded-[2rem] p-6 border border-white/5 flex flex-col justify-between h-48">
+                <div className="flex justify-between items-start">
+                  <div>
+                    <div className="flex items-center gap-2 text-white/40 text-xs font-bold uppercase tracking-widest">
+                      <Droplets size={14} /> Humidity
+                    </div>
+                    <div className="text-4xl text-white font-bold mt-4">{current?.relative_humidity_2m}%</div>
+                  </div>
+                  <div className="text-right">
+                     <div className="text-white/40 text-[10px] font-bold uppercase tracking-wider mb-1">Dew Point</div>
+                     <div className="text-xl text-white font-semibold">{Math.round(current?.temperature_2m - 5)}°</div>
+                  </div>
+                </div>
+                <div className="text-sm text-white/60 leading-tight">
+                  Current visibility is {current?.visibility ? Math.round(current.visibility / 1609).toFixed(1) : '10'} miles.
+                </div>
+              </div>
+            </div>
+
+            <div className="flex justify-center text-white/20 text-xs items-center gap-2 py-8">
+              Data from Open-Meteo • {location.name} Weather
+            </div>
+          </div>
+        </div>
+
+        {/* Search Overlay */}
+        {isSearching && (
+          <div className="absolute inset-0 z-[110] bg-black/60 backdrop-blur-2xl p-8 transition-all animate-in fade-in zoom-in-95">
+            <div className="relative">
+              <input 
+                autoFocus
+                type="text"
+                placeholder="Search for a city..."
+                value={searchQuery}
+                onChange={(e) => setSearchQuery(e.target.value)}
+                className="w-full bg-white/10 border border-white/20 rounded-2xl px-14 py-5 text-white text-lg placeholder-white/40 focus:outline-none focus:ring-2 ring-blue-400"
+              />
+              <Search className="absolute left-5 top-1/2 -translate-y-1/2 text-white/40" size={24} />
+              <button 
+                onClick={() => setIsSearching(false)}
+                className="absolute right-5 top-1/2 -translate-y-1/2 text-white/60 hover:text-white font-medium"
+              >
+                Cancel
+              </button>
+            </div>
+            <div className="mt-6 space-y-3">
+              {suggestions.map((res, idx) => (
+                <button 
+                  key={idx}
+                  onClick={() => selectLocation(res)}
+                  className="w-full flex items-center justify-between p-5 bg-white/5 hover:bg-white/15 rounded-2xl text-white transition-colors border border-white/5"
+                >
+                  <div className="flex flex-col items-start text-left">
+                    <span className="font-semibold text-xl">{res.name}</span>
+                    <span className="text-base text-white/40">{res.admin1}, {res.country}</span>
+                  </div>
+                  <MapPin size={20} className="text-white/40" />
+                </button>
+              ))}
+            </div>
+          </div>
+        )}
+      </div>
+
+      <style>{`
+        .scrollbar-hide::-webkit-scrollbar { display: none; }
+        .scrollbar-hide { -ms-overflow-style: none; scrollbar-width: none; }
+      `}</style>
+    </div>
+  );
+}
